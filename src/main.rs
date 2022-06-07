@@ -2,31 +2,62 @@ use std::{collections::HashMap, time::Duration};
 
 use rumqttc::{Client, MqttOptions, QoS, SubscribeFilter};
 
+#[derive(Debug, Clone)]
+struct Thermometer {
+    status: ThermometerStatus,
+    /// last measurement of the thermometer in degree Celsius.
+    last_measurement: Option<f64>,
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 enum ThermometerStatus {
     Connected,
     Disconnected,
 }
 
-fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, ThermometerStatus>) {
+fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, Thermometer>) {
     let topic_path: Vec<_> = msg.topic.split('/').collect();
 
-    if topic_path[0] == "thermometer" && topic_path.len() == 2 {
-        let payload =
-            String::from_utf8(msg.payload.to_vec()).expect(&format!("bad message {:?}", msg));
+    if topic_path[0] == "thermometer" && topic_path.len() == 3 {
+        let name = topic_path[1];
+        let msg_type = topic_path[2];
+        match msg_type {
+            "status" => {
+                let payload = String::from_utf8(msg.payload.to_vec())
+                    .expect(&format!("bad message {:?}", msg));
 
-        let status = match payload.as_str() {
-            "connected" => ThermometerStatus::Connected,
-            "disconnected" => ThermometerStatus::Disconnected,
-            _ => panic!("bad message {:?}", msg),
-        };
+                let status = match payload.as_str() {
+                    "connected" => ThermometerStatus::Connected,
+                    "disconnected" => ThermometerStatus::Disconnected,
+                    _ => panic!("bad message {:?}", msg),
+                };
 
-        *thermometer_list
-            .entry(topic_path[1].to_string())
-            .or_insert(status) = status;
+                thermometer_list
+                    .entry(name.to_string())
+                    .or_insert(Thermometer {
+                        status,
+                        last_measurement: None,
+                    })
+                    .status = status;
+            }
+            "measurement" => {
+                let measurement: f64 = String::from_utf8(msg.payload.to_vec())
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+
+                thermometer_list
+                    .entry(name.to_string())
+                    .or_insert(Thermometer {
+                        status: ThermometerStatus::Disconnected,
+                        last_measurement: Some(measurement),
+                    })
+                    .last_measurement = Some(measurement);
+            }
+            _ => {}
+        }
+        dbg!(thermometer_list);
     }
-
-    dbg!(thermometer_list);
 }
 
 fn main() {
@@ -36,7 +67,7 @@ fn main() {
     let (mut client, mut connection) = Client::new(mqttoptions, 10);
     client
         .subscribe_many([SubscribeFilter::new(
-            "thermometer/+".to_string(),
+            "thermometer/#".to_string(),
             QoS::ExactlyOnce,
         )])
         .unwrap();
