@@ -1,5 +1,33 @@
+use std::{collections::HashMap, time::Duration};
+
 use rumqttc::{Client, MqttOptions, QoS, SubscribeFilter};
-use std::time::Duration;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum ThermometerStatus {
+    Connected,
+    Disconnected,
+}
+
+fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, ThermometerStatus>) {
+    let topic_path: Vec<_> = msg.topic.split('/').collect();
+
+    if topic_path[0] == "thermometer" && topic_path.len() == 2 {
+        let payload =
+            String::from_utf8(msg.payload.to_vec()).expect(&format!("bad message {:?}", msg));
+
+        let status = match payload.as_str() {
+            "connected" => ThermometerStatus::Connected,
+            "disconnected" => ThermometerStatus::Disconnected,
+            _ => panic!("bad message {:?}", msg),
+        };
+
+        *thermometer_list
+            .entry(topic_path[1].to_string())
+            .or_insert(status) = status;
+    }
+
+    dbg!(thermometer_list);
+}
 
 fn main() {
     let mut mqttoptions = MqttOptions::new("server", "127.0.0.1", 1883);
@@ -13,19 +41,12 @@ fn main() {
         )])
         .unwrap();
 
+    let mut thermometer_list = HashMap::new();
     for notification in connection.iter() {
-        match notification.unwrap() {
-            rumqttc::Event::Incoming(packet) => match packet {
-                rumqttc::Packet::Publish(msg) => {
-                    println!(
-                        "topic={}, payload={}",
-                        msg.topic,
-                        String::from_utf8(msg.payload.to_vec()).unwrap()
-                    );
-                }
-                _ => {}
-            },
-            _ => {}
+        if let rumqttc::Event::Incoming(packet) = notification.unwrap() {
+            if let rumqttc::Packet::Publish(msg) = packet {
+                handle_msg(msg, &mut thermometer_list)
+            }
         }
     }
 }
