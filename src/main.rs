@@ -1,6 +1,7 @@
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
-use rumqttc::{Client, MqttOptions, QoS, SubscribeFilter};
+use tokio::try_join;
+use warp::Filter;
 
 #[derive(Debug, Clone)]
 struct Thermometer {
@@ -23,9 +24,7 @@ fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, Ther
         let msg_type = topic_path[2];
         match msg_type {
             "status" => {
-                let payload = String::from_utf8(msg.payload.to_vec())
-                    .expect(&format!("bad message {:?}", msg));
-
+                let payload = String::from_utf8(msg.payload.to_vec()).expect("bad message");
                 let status = match payload.as_str() {
                     "connected" => ThermometerStatus::Connected,
                     "disconnected" => ThermometerStatus::Disconnected,
@@ -60,24 +59,34 @@ fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, Ther
     }
 }
 
-fn main() {
-    let mut mqttoptions = MqttOptions::new("server", "127.0.0.1", 1883);
-    mqttoptions.set_keep_alive(Duration::from_secs(5));
+async fn start_web_server() {
+    let filter = warp::path::end().map(|| "Hello, world!".to_string());
+    warp::serve(filter).run(([127, 0, 0, 1], 3030)).await;
+}
 
-    let (mut client, mut connection) = Client::new(mqttoptions, 10);
+async fn start_control_server() {
+    use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+
+    let mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
+    let (client, mut connection) = AsyncClient::new(mqtt_options, 10);
+
     client
-        .subscribe_many([SubscribeFilter::new(
-            "thermometer/#".to_string(),
-            QoS::ExactlyOnce,
-        )])
+        .subscribe("thermometer/#".to_string(), QoS::ExactlyOnce)
+        .await
         .unwrap();
 
     let mut thermometer_list = HashMap::new();
-    for notification in connection.iter() {
-        if let rumqttc::Event::Incoming(packet) = notification.unwrap() {
-            if let rumqttc::Packet::Publish(msg) = packet {
-                handle_msg(msg, &mut thermometer_list)
-            }
+    while let Ok(notification) = connection.poll().await {
+        if let Event::Incoming(Packet::Publish(msg)) = notification {
+            handle_msg(msg, &mut thermometer_list)
         }
     }
+}
+
+#[tokio::main]
+async fn main() {
+    let web_server = tokio::spawn(start_web_server());
+    let control_server = tokio::spawn(start_control_server());
+
+    try_join!(web_server, control_server).unwrap();
 }
