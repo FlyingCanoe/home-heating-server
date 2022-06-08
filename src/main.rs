@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use tokio::sync::watch;
 use tokio::try_join;
 use warp::Filter;
 
@@ -16,7 +17,7 @@ enum ThermometerStatus {
     Disconnected,
 }
 
-fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, Thermometer>) {
+fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, Thermometer>>) {
     let topic_path: Vec<_> = msg.topic.split('/').collect();
 
     if topic_path[0] == "thermometer" && topic_path.len() == 3 {
@@ -31,13 +32,15 @@ fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, Ther
                     _ => panic!("bad message {:?}", msg),
                 };
 
-                thermometer_list
-                    .entry(name.to_string())
-                    .or_insert(Thermometer {
-                        status,
-                        last_measurement: None,
-                    })
-                    .status = status;
+                sender.send_modify(|thermometer_list| {
+                    thermometer_list
+                        .entry(name.to_string())
+                        .or_insert(Thermometer {
+                            status,
+                            last_measurement: None,
+                        })
+                        .status = status;
+                });
             }
             "measurement" => {
                 let measurement: f64 = String::from_utf8(msg.payload.to_vec())
@@ -45,26 +48,39 @@ fn handle_msg(msg: rumqttc::Publish, thermometer_list: &mut HashMap<String, Ther
                     .parse()
                     .unwrap();
 
-                thermometer_list
-                    .entry(name.to_string())
-                    .or_insert(Thermometer {
-                        status: ThermometerStatus::Disconnected,
-                        last_measurement: Some(measurement),
-                    })
-                    .last_measurement = Some(measurement);
+                sender.send_modify(|thermometer_list| {
+                    thermometer_list
+                        .entry(name.to_string())
+                        .or_insert(Thermometer {
+                            status: ThermometerStatus::Disconnected,
+                            last_measurement: Some(measurement),
+                        })
+                        .last_measurement = Some(measurement);
+                });
             }
             _ => {}
         }
-        dbg!(thermometer_list);
     }
 }
 
-async fn start_web_server() {
-    let filter = warp::path::end().map(|| "Hello, world!".to_string());
+async fn start_web_server(receiver: watch::Receiver<HashMap<String, Thermometer>>) {
+    let filter = warp::path::end().map(move || {
+        let thermometer_list = (&receiver).borrow();
+        let page: String = thermometer_list
+            .iter()
+            .map(|(name, thermometer)| {
+                format!(
+                    "name={name}, status={:?}, last_measurement={:?}\n",
+                    thermometer.status, thermometer.last_measurement
+                )
+            })
+            .collect();
+        page
+    });
     warp::serve(filter).run(([127, 0, 0, 1], 3030)).await;
 }
 
-async fn start_control_server() {
+async fn start_control_server(mut sender: watch::Sender<HashMap<String, Thermometer>>) {
     use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 
     let mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
@@ -75,18 +91,20 @@ async fn start_control_server() {
         .await
         .unwrap();
 
-    let mut thermometer_list = HashMap::new();
-    while let Ok(notification) = connection.poll().await {
+    loop {
+        let notification = connection.poll().await.unwrap();
         if let Event::Incoming(Packet::Publish(msg)) = notification {
-            handle_msg(msg, &mut thermometer_list)
+            handle_msg(msg, &mut sender)
         }
     }
 }
 
 #[tokio::main]
 async fn main() {
-    let web_server = tokio::spawn(start_web_server());
-    let control_server = tokio::spawn(start_control_server());
+    let (sender, receiver) = watch::channel(HashMap::<String, Thermometer>::new());
+
+    let web_server = tokio::spawn(start_web_server(receiver));
+    let control_server = tokio::spawn(start_control_server(sender));
 
     try_join!(web_server, control_server).unwrap();
 }
