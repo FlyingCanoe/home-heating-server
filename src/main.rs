@@ -66,10 +66,14 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
 }
 
 async fn start_web_server(receiver: watch::Receiver<HashMap<String, Thermometer>>) {
-    let filter = warp::path::end().map(move || {
-        let thermometer_list = (&receiver).borrow();
-        warp::reply::json(&thermometer_list.clone())
+    let rest_api = warp::path!("rest-api" / "thermometer").map(move || {
+        let thermometer_list: Vec<_> = (&receiver).borrow().clone().into_iter().collect();
+        warp::reply::json(&thermometer_list)
     });
+
+    let webapp = warp::fs::dir("webapp/dist");
+
+    let filter = warp::get().and(rest_api.or(webapp));
     warp::serve(filter).run(([127, 0, 0, 1], 3030)).await;
 }
 
