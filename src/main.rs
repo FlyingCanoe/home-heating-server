@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 
+use serde::Deserialize;
+use serde::Serialize;
 use tokio::sync::watch;
 use tokio::try_join;
 use warp::Filter;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Thermometer {
     status: ThermometerStatus,
     /// last measurement of the thermometer in degree Celsius.
     last_measurement: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 enum ThermometerStatus {
     Connected,
     Disconnected,
@@ -66,16 +68,7 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
 async fn start_web_server(receiver: watch::Receiver<HashMap<String, Thermometer>>) {
     let filter = warp::path::end().map(move || {
         let thermometer_list = (&receiver).borrow();
-        let page: String = thermometer_list
-            .iter()
-            .map(|(name, thermometer)| {
-                format!(
-                    "name={name}, status={:?}, last_measurement={:?}\n",
-                    thermometer.status, thermometer.last_measurement
-                )
-            })
-            .collect();
-        page
+        warp::reply::json(&thermometer_list.clone())
     });
     warp::serve(filter).run(([127, 0, 0, 1], 3030)).await;
 }
