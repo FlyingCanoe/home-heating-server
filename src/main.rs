@@ -27,16 +27,15 @@ enum ThermometerStatus {
 
 #[tokio::main]
 async fn main() {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let (sender, receiver) = watch::channel(HashMap::<String, Thermometer>::new());
 
-    let web_server = start_web_server(receiver);
-    let control_server = start_control_server(sender);
+    let web_server = start_web_server(receiver, tx);
+    let control_server = start_control_server(sender, rx);
 
     select! {
-        _ = web_server => {}
-        output = control_server => {
-            output.unwrap()
-        }
-
+        output = web_server => {output}
+        output = control_server => {output}
     }
+    .unwrap()
 }

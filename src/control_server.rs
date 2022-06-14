@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use tokio::sync::mpsc;
 use tokio::sync::watch;
 
 use super::{Thermometer, ThermometerStatus};
@@ -70,8 +71,26 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
     }
 }
 
+async fn handle_webserver_request(
+    receiver: &mut mpsc::UnboundedReceiver<(String, f64)>,
+    client: &AsyncClient,
+) {
+    if let Ok((name, wanted_temperature)) = receiver.try_recv() {
+        client
+            .publish(
+                format!("thermometer/{name}/change-target"),
+                QoS::ExactlyOnce,
+                false,
+                wanted_temperature.to_string(),
+            )
+            .await
+            .unwrap();
+    };
+}
+
 pub(crate) fn start_control_server(
     mut sender: watch::Sender<HashMap<String, Thermometer>>,
+    mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
@@ -83,10 +102,10 @@ pub(crate) fn start_control_server(
             .unwrap();
 
         loop {
-            let notification = connection.poll().await.unwrap();
-            if let Event::Incoming(Packet::Publish(msg)) = notification {
+            if let Event::Incoming(Packet::Publish(msg)) = connection.poll().await.unwrap() {
                 handle_msg(msg, &mut sender)
             }
+            handle_webserver_request(&mut receiver, &client).await;
         }
     })
 }

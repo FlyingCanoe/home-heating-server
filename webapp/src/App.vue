@@ -62,7 +62,7 @@ export default defineComponent({
 
   created() {
     let poll_api = async () => {
-      const response = await fetch("/rest-api/thermometer");
+      const response = await fetch("/rest-api/thermometer-status");
       const thermometer_list: [string, thermometer][] = await response.json();
       this.thermometer_list = thermometer_list;
     };
