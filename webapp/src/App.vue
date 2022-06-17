@@ -24,7 +24,7 @@
   </table>
 </template>
 
-<style>
+<style lang="scss">
 @import "./assets/base.scss";
 </style>
 
