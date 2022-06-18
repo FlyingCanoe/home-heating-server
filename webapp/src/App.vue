@@ -1,27 +1,16 @@
 <template>
-  <table>
-    <thead>
-      <tr>
-        <th>Nom</th>
-        <th>Status</th>
-        <th>Température</th>
-        <th>Température cible</th>
-        <th>Delta</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr
-        v-for="thermometer in thermometer_list_ext"
-        v-bind:key="thermometer[0]"
-      >
-        <td v-text="thermometer[0]" />
-        <td v-text="thermometer[1].status" />
-        <td v-text="thermometer[1].last_measurement" />
-        <td v-text="thermometer[1].target_temperature" />
-        <td v-text="thermometer[2]" />
-      </tr>
-    </tbody>
-  </table>
+  <div class="card-group">
+    <div
+      class="card"
+      v-for="thermometer in thermometer_list_ext"
+      v-bind:key="thermometer[0]"
+    >
+      <h2>{{ thermometer[0] }}</h2>
+      <p>température: {{ thermometer[1].last_measurement }}</p>
+      <p>température cible: {{ thermometer[1].target_temperature }}</p>
+      <p>delta: {{ thermometer[2] }}</p>
+    </div>
+  </div>
 </template>
 
 <style lang="scss">
