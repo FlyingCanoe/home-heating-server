@@ -14,7 +14,7 @@ use db::start_db;
 use web_server::start_web_server;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Thermometer {
+pub struct Thermometer {
     status: ThermometerStatus,
     /// last measurement of the thermometer in degree Celsius.
     last_measurement: Option<f64>,
@@ -37,19 +37,31 @@ impl ToString for ThermometerStatus {
     }
 }
 
+impl From<String> for ThermometerStatus {
+    fn from(input: String) -> Self {
+        match input.as_str() {
+            "Connected" => ThermometerStatus::Connected,
+            "Disconnected" => ThermometerStatus::Disconnected,
+            _ => panic!("invalid status"),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let (sender, receiver) = watch::channel(HashMap::<String, Thermometer>::new());
+    let (watch, watcher) = watch::channel(HashMap::<String, Thermometer>::new());
 
-    let web_server = start_web_server(receiver.clone(), tx);
-    let control_server = start_control_server(sender, rx);
-    let db = start_db(receiver);
+    let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (db_request_tx, db_request_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (db_response_tx, db_response_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let web_server = start_web_server(watcher.clone(), control_tx, db_request_tx, db_response_rx);
+    let control_server = start_control_server(watch, control_rx);
+    let db = start_db(watcher, db_request_rx, db_response_tx);
 
     select! {
         output = web_server => {output}
         output = control_server => {output}
-        output = db => {output}
     }
     .unwrap()
 }

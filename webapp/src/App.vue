@@ -20,11 +20,13 @@
 <script lang="ts">
 import { defineComponent } from "vue";
 import type { thermometer } from "./thermometer";
+import Plotly from "plotly.js-dist-min";
 
 export default defineComponent({
   data() {
     return {
       thermometer_list: [] as [string, thermometer][],
+      thermometer_history_list: [] as [string, thermometer[]][],
     };
   },
 
@@ -57,6 +59,28 @@ export default defineComponent({
     };
     poll_api();
     setInterval(poll_api, 3000);
+
+    let poll_history = async () => {
+      this.thermometer_list.forEach(async (thermometer) => {
+        let name = thermometer[0];
+        const response = await fetch(`/rest-api/thermometer-history/${name}`);
+        const thermometer_history_list: [string, thermometer[]][] =
+          await response.json();
+        this.thermometer_history_list = thermometer_history_list;
+      });
+    };
+    poll_history();
+    setInterval(poll_history, 3000);
   },
 });
+
+let trace1 = {
+  x: [1, 2, 3, 4],
+
+  y: [10, 15, 13, 17],
+};
+
+let data = trace1;
+
+Plotly.newPlot("myDiv", [data]);
 </script>
