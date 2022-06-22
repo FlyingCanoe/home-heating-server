@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::select;
 use tokio::sync::watch;
 
 mod control_server;
@@ -55,13 +54,7 @@ async fn main() {
     let (db_request_tx, db_request_rx) = tokio::sync::mpsc::unbounded_channel();
     let (db_response_tx, db_response_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    let web_server = start_web_server(watcher.clone(), control_tx, db_request_tx, db_response_rx);
-    let control_server = start_control_server(watch, control_rx);
-    let db = start_db(watcher, db_request_rx, db_response_tx);
-
-    select! {
-        output = web_server => {output}
-        output = control_server => {output}
-    }
-    .unwrap()
+    start_web_server(watcher.clone(), control_tx, db_request_tx, db_response_rx);
+    start_db(watcher, db_request_rx, db_response_tx);
+    start_control_server(watch, control_rx).await.unwrap();
 }
