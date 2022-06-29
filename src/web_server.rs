@@ -10,12 +10,29 @@ use tokio::sync::watch;
 use crate::db::{DbRequest, DbResponse};
 use crate::Thermometer;
 
-#[actix_web::get("/rest-api/thermometer-status")]
-async fn thermometer_status(
+#[actix_web::get("/rest-api/thermometer-list")]
+async fn thermometer_list(
     receiver: web::Data<watch::Receiver<HashMap<String, Thermometer>>>,
 ) -> Result<HttpResponse, http::Error> {
-    let thermometer_list: Vec<_> = (receiver).borrow().clone().into_iter().collect();
+    let thermometer_list: Vec<_> = (receiver)
+        .borrow()
+        .clone()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
     Ok(HttpResponse::Ok().json(thermometer_list))
+}
+
+#[actix_web::get("/rest-api/thermometer-status/{name}")]
+async fn thermometer_status(
+    receiver: web::Data<watch::Receiver<HashMap<String, Thermometer>>>,
+    name: web::Path<String>,
+) -> Result<HttpResponse, http::Error> {
+    if let Some(thermometer) = receiver.borrow().get(&name.to_string()) {
+        Ok(HttpResponse::Ok().json(thermometer.clone()))
+    } else {
+        Ok(HttpResponse::NotFound().finish())
+    }
 }
 
 #[actix_web::post("/rest-api/thermometer-target")]
@@ -46,7 +63,6 @@ async fn thermometer_history(
     let response = rx.recv().await.unwrap();
 
     let DbResponse::ThermometerHistory(history) = response;
-    serde_json::to_string(&history).unwrap();
     Ok(HttpResponse::Ok().json(history))
 }
 
@@ -73,6 +89,7 @@ pub(crate) fn start_web_server(
                         .service(thermometer_history)
                         .service(change_thermometer_target)
                         .service(thermometer_status)
+                        .service(thermometer_list)
                         .service(Files::new("", "webapp/dist").index_file("index.html"))
                 })
                 .bind(("127.0.0.1", 5500))
