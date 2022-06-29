@@ -1,6 +1,7 @@
 <template>
   <div>
     <h2>{{ name }}</h2>
+    <div ref="graph"></div>
     <p>température: {{ thermometer?.last_measurement }}</p>
     <p>température cible: {{ thermometer?.target_temperature }}</p>
   </div>
@@ -12,6 +13,7 @@
 
 <script lang="ts">
 import { defineComponent } from "vue";
+import Plotly from "plotly.js-dist-min";
 import type { thermometer } from "../thermometer";
 
 export default defineComponent({
@@ -44,6 +46,17 @@ export default defineComponent({
     poll_status();
     setInterval(poll_history, 3000);
     setInterval(poll_status, 3000);
+  },
+
+  mounted() {
+    let trace1 = {
+      x: [1, 2, 3, 4],
+
+      y: [10, 15, 13, 17],
+    };
+
+    let data = trace1;
+    Plotly.newPlot(this.$refs.graph, [data]);
   },
 });
 </script>
