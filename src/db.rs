@@ -33,17 +33,8 @@ fn insert_thermometer_history(
 ) {
     let time = time.to_rfc3339();
     let status = thermometer.status.to_string();
-    let last_measurement = thermometer
-        .last_measurement
-        .as_ref()
-        .map(f64::to_string)
-        .unwrap_or("null".to_string());
-
-    let target_temperature = thermometer
-        .target_temperature
-        .as_ref()
-        .map(f64::to_string)
-        .unwrap_or("null".to_string());
+    let last_measurement = thermometer.last_measurement;
+    let target_temperature = thermometer.target_temperature;
 
     conn.execute(
         "INSERT INTO thermometer_history VALUES(?, ?, ?, ?, ?)",
@@ -74,14 +65,14 @@ fn get_thermometer_history(
                 DateTime::parse_from_rfc3339(row.get::<_, String>(0).unwrap().as_str()).unwrap();
             let thermometer = Thermometer {
                 // get column 1 (status) and parse it as a ThermometerStatus
-                status: ThermometerStatus::from(row.get::<_, String>(1)?),
-                last_measurement: row.get(2)?,
-                target_temperature: row.get(3)?,
+                status: ThermometerStatus::from(row.get::<_, String>(1).unwrap()),
+                last_measurement: row.get(2).unwrap(),
+                target_temperature: row.get::<_, Option<f64>>(3).unwrap(),
             };
             Ok((time, thermometer))
         })
         .unwrap()
-        .map(Result::unwrap)
+        .map(|x| if let Ok(x) = x { x } else { panic!("test 3") })
         .collect()
 }
 
@@ -90,13 +81,11 @@ pub(crate) fn start_db(
     mut rx: mpsc::UnboundedReceiver<DbRequest>,
     tx: mpsc::UnboundedSender<DbResponse>,
 ) {
-    std::thread::spawn(move || {
-        let conn = rusqlite::Connection::open("db.sqlite").unwrap();
-        create_table(&conn);
+    let conn = rusqlite::Connection::open("db.sqlite").unwrap();
+    create_table(&conn);
 
-        //let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
-
-        while let Some(request) = rx.blocking_recv() {
+    std::thread::spawn(move || loop {
+        while let Ok(request) = rx.try_recv() {
             match request {
                 DbRequest::ThermometerHistory(name) => {
                     let response = get_thermometer_history(&conn, name.as_str());
@@ -105,14 +94,10 @@ pub(crate) fn start_db(
             }
         }
 
-        loop {
-            for (name, thermometer) in watch.borrow().iter() {
-                let time = chrono::Local::now();
-
-                insert_thermometer_history(&conn, name, &time, thermometer)
-            }
-
-            std::thread::sleep_ms(10 * 1000);
+        for (name, thermometer) in watch.borrow().iter() {
+            let time = chrono::Local::now();
+            insert_thermometer_history(&conn, name, &time, thermometer)
         }
+        std::thread::sleep_ms(10 * 1000);
     });
 }
