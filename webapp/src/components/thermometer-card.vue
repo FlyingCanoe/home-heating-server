@@ -49,14 +49,15 @@ export default defineComponent({
   },
 
   mounted() {
-    let trace1 = {
+    let data = {
       x: [1, 2, 3, 4],
 
       y: [10, 15, 13, 17],
     };
 
-    let data = trace1;
-    Plotly.newPlot(this.$refs.graph, [data]);
+    let graph_div = this.$refs.graph as HTMLDivElement;
+
+    Plotly.newPlot(graph_div, [data]);
   },
 });
 </script>
