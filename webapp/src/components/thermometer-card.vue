@@ -40,6 +40,26 @@ export default defineComponent({
       );
 
       this.thermometer_history = await response.json();
+      let graph_div = this.$refs.graph as HTMLDivElement;
+
+      let x = [] as string[];
+      let y = [] as number[];
+
+      this.thermometer_history.forEach(([date, thermometer]) => {
+        if (thermometer.last_measurement !== null) {
+          x.push(date);
+          y.push(thermometer.last_measurement);
+        }
+      });
+
+      let data = {
+        x: x,
+        y: y,
+      };
+
+      console.log("test");
+
+      Plotly.react(graph_div, [data]);
     };
 
     poll_history();
@@ -50,13 +70,11 @@ export default defineComponent({
 
   mounted() {
     let data = {
-      x: [1, 2, 3, 4],
-
-      y: [10, 15, 13, 17],
+      x: ["2013-10-04 22:23:00", "2013-11-04 22:23:00", "2013-12-04 22:23:00"],
+      y: [1, 3, 6],
     };
 
     let graph_div = this.$refs.graph as HTMLDivElement;
-
     Plotly.newPlot(graph_div, [data]);
   },
 });
