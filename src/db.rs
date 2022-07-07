@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use chrono::DateTime;
 use chrono::FixedOffset;
@@ -82,7 +83,9 @@ pub(crate) fn start_db(
     tx: mpsc::UnboundedSender<DbResponse>,
 ) {
     let conn = rusqlite::Connection::open("db.sqlite").unwrap();
+
     create_table(&conn);
+    let last_history_update = std::time::Instant::now();
 
     std::thread::spawn(move || loop {
         while let Ok(request) = rx.try_recv() {
@@ -94,10 +97,11 @@ pub(crate) fn start_db(
             }
         }
 
-        for (name, thermometer) in watch.borrow().iter() {
-            let time = chrono::Local::now();
-            insert_thermometer_history(&conn, name, &time, thermometer)
+        if last_history_update.elapsed() >= Duration::from_secs(10) {
+            for (name, thermometer) in watch.borrow().iter() {
+                let time = chrono::Local::now();
+                insert_thermometer_history(&conn, name, &time, thermometer)
+            }
         }
-        std::thread::sleep_ms(10 * 1000);
     });
 }
