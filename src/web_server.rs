@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use actix_files::Files;
+use actix_web::middleware::Logger;
 use actix_web::{http, web, App, HttpResponse, HttpServer};
 use tokio::sync::mpsc;
 use tokio::sync::watch;
@@ -83,6 +84,7 @@ pub(crate) fn start_web_server(
             .block_on(
                 HttpServer::new(move || {
                     App::new()
+                        .wrap(Logger::default())
                         .app_data(web::Data::new(db_conn.clone()))
                         .app_data(web::Data::new(watcher.clone()))
                         .app_data(web::Data::new(control_tx.clone()))

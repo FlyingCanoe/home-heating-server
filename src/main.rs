@@ -48,6 +48,10 @@ impl From<String> for ThermometerStatus {
 
 #[tokio::main]
 async fn main() {
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .init();
+
     let (watch, watcher) = watch::channel(HashMap::<String, Thermometer>::new());
 
     let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
