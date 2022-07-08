@@ -32,8 +32,6 @@ export default defineComponent({
       const response = await fetch("/rest-api/thermometer-list");
       const thermometer_list: string[] = await response.json();
       this.thermometer_list = thermometer_list;
-
-      console.log(thermometer_list);
     };
     poll_api();
     setInterval(poll_api, 3000);
