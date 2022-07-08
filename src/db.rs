@@ -85,7 +85,7 @@ pub(crate) fn start_db(
     let conn = rusqlite::Connection::open("db.sqlite").unwrap();
 
     create_table(&conn);
-    let last_history_update = std::time::Instant::now();
+    let mut last_history_update = std::time::Instant::now();
 
     std::thread::spawn(move || loop {
         while let Ok(request) = rx.try_recv() {
@@ -102,6 +102,8 @@ pub(crate) fn start_db(
                 let time = chrono::Local::now();
                 insert_thermometer_history(&conn, name, &time, thermometer)
             }
+
+            last_history_update = std::time::Instant::now();
         }
     });
 }
