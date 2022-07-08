@@ -18,7 +18,7 @@ pub enum DbRequest {
 
 #[derive(Clone, Debug)]
 pub enum DbResponse {
-    ThermometerHistory(Vec<(DateTime<FixedOffset>, Thermometer)>),
+    ThermometerHistory(Vec<(i64, Thermometer)>),
 }
 
 fn create_table(conn: &rusqlite::Connection) {
@@ -44,10 +44,7 @@ fn insert_thermometer_history(
     .unwrap();
 }
 
-fn get_thermometer_history(
-    conn: &rusqlite::Connection,
-    name: &str,
-) -> Vec<(DateTime<FixedOffset>, Thermometer)> {
+fn get_thermometer_history(conn: &rusqlite::Connection, name: &str) -> Vec<(i64, Thermometer)> {
     let mut statement = conn
         .prepare(
             "SELECT
@@ -62,8 +59,9 @@ fn get_thermometer_history(
     statement
         .query_map(params![name], |row| {
             // get the column 0 (time) and parse it as a DateTime
-            let time =
-                DateTime::parse_from_rfc3339(row.get::<_, String>(0).unwrap().as_str()).unwrap();
+            let time = DateTime::parse_from_rfc3339(row.get::<_, String>(0).unwrap().as_str())
+                .unwrap()
+                .timestamp();
             let thermometer = Thermometer {
                 // get column 1 (status) and parse it as a ThermometerStatus
                 status: ThermometerStatus::from(row.get::<_, String>(1).unwrap()),
@@ -73,7 +71,7 @@ fn get_thermometer_history(
             Ok((time, thermometer))
         })
         .unwrap()
-        .map(|x| if let Ok(x) = x { x } else { panic!("test 3") })
+        .map(Result::unwrap)
         .collect()
 }
 

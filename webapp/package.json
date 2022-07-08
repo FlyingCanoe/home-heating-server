@@ -11,7 +11,8 @@
     "watch": "vite build --watch"
   },
   "dependencies": {
-    "plotly.js-dist-min": "^2.12.1",
+    "uplot": "^1.6.22",
+    "uplot-vue": "^1.1.1",
     "vue": "^3.2.36"
   },
   "devDependencies": {

@@ -1,10 +1,6 @@
 <template>
-  <div>
-    <h2>{{ name }}</h2>
-    <div ref="graph"></div>
-    <p>température: {{ thermometer?.last_measurement }}</p>
-    <p>température cible: {{ thermometer?.target_temperature }}</p>
-  </div>
+  <h2>{{ name }}</h2>
+  <uPlotVue :data="data" :options="plot_option" />
 </template>
 
 <style lang="scss">
@@ -13,7 +9,11 @@
 
 <script lang="ts">
 import { defineComponent } from "vue";
-import Plotly from "plotly.js-dist-min";
+import UplotVue from "uplot-vue";
+
+import "uplot/dist/uPlot.min.css";
+
+import type uPlot from "uplot";
 import type { thermometer } from "../thermometer";
 
 export default defineComponent({
@@ -23,10 +23,33 @@ export default defineComponent({
   data() {
     return {
       thermometer: null as thermometer | null,
-      thermometer_history: [] as [string, thermometer][],
+      thermometer_history: [] as [number, thermometer][],
+      data: [[], [], []] as uPlot.AlignedData,
+      plot_option: {
+        width: 500,
+        height: 300,
+        series: [
+          {
+            label: "heurs",
+            value: (_, timestamp) => {
+              let date = new Date(timestamp * 1000);
+              return `${date.getHours()}:${date.getMinutes()}`;
+            },
+          },
+          {
+            label: "température",
+            stroke: "red",
+            fill: "rgba(255,0,0,0.1)",
+          },
+          {
+            label: "température cible",
+            stroke: "blue",
+          },
+        ],
+      } as uPlot.Options,
     };
   },
-
+  components: { uPlotVue: UplotVue },
   created() {
     let poll_status = async () => {
       const response = await fetch(`/rest-api/thermometer-status/${this.name}`);
@@ -39,43 +62,31 @@ export default defineComponent({
         `/rest-api/thermometer-history/${this.name}`
       );
 
-      this.thermometer_history = await response.json();
-      let graph_div = this.$refs.graph as HTMLDivElement;
+      let raw_thermometer_history: [number, thermometer][] =
+        await response.json();
 
-      let x = [] as string[];
-      let y = [] as number[];
+      let x = [] as number[];
+      let temperature = [] as number[];
+      let cible = [] as number[];
 
-      this.thermometer_history.forEach(([date, thermometer]) => {
-        if (thermometer.last_measurement !== null) {
+      raw_thermometer_history.forEach(([date, thermometer]) => {
+        if (
+          thermometer.last_measurement !== null &&
+          thermometer.target_temperature !== null
+        ) {
           x.push(date);
-          y.push(thermometer.last_measurement);
+          temperature.push(thermometer.last_measurement);
+          cible.push(thermometer.target_temperature);
         }
       });
 
-      let data = {
-        x: x,
-        y: y,
-      };
-
-      console.log("test");
-
-      Plotly.react(graph_div, [data]);
+      this.data = [x, temperature, cible];
     };
 
     poll_history();
     poll_status();
     setInterval(poll_history, 3000);
     setInterval(poll_status, 3000);
-  },
-
-  mounted() {
-    let data = {
-      x: [],
-      y: [],
-    };
-
-    let graph_div = this.$refs.graph as HTMLDivElement;
-    Plotly.newPlot(graph_div, [data]);
   },
 });
 </script>
