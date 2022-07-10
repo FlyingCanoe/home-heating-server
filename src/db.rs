@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use chrono::DateTime;
-use chrono::FixedOffset;
 use chrono::Local;
 use rusqlite::params;
 use tokio::sync::{mpsc, watch};
@@ -45,6 +44,8 @@ fn insert_thermometer_history(
 }
 
 fn get_thermometer_history(conn: &rusqlite::Connection, name: &str) -> Vec<(i64, Thermometer)> {
+    let start_time = chrono::Local::now() - chrono::Duration::hours(24);
+
     let mut statement = conn
         .prepare(
             "SELECT
@@ -53,11 +54,12 @@ fn get_thermometer_history(conn: &rusqlite::Connection, name: &str) -> Vec<(i64,
                 last_measurement,
                 target_temperature
             FROM thermometer_history
-            WHERE name = ?",
+            WHERE name = ?
+            AND   time >= ?",
         )
         .unwrap();
     statement
-        .query_map(params![name], |row| {
+        .query_map(params![name, start_time.to_rfc3339()], |row| {
             // get the column 0 (time) and parse it as a DateTime
             let time = DateTime::parse_from_rfc3339(row.get::<_, String>(0).unwrap().as_str())
                 .unwrap()
