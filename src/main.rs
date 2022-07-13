@@ -20,6 +20,15 @@ pub struct Thermometer {
     target_temperature: Option<f64>,
 }
 
+impl Thermometer {
+    pub fn is_disconnected(&self) -> bool {
+        match self.status {
+            ThermometerStatus::Connected => false,
+            ThermometerStatus::Disconnected => true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]
 enum ThermometerStatus {
     Connected,

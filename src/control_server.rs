@@ -1,10 +1,47 @@
 use std::collections::HashMap;
 
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
 use super::{Thermometer, ThermometerStatus};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Error {
+    msg: String,
+    severity: ErrorSeverity,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum ErrorSeverity {
+    Warning,
+    Error,
+}
+
+pub fn get_error(status: &HashMap<String, Thermometer>) -> Option<Error> {
+    if status
+        .iter()
+        .all(|(_, thermometer)| thermometer.is_disconnected())
+    {
+        let error = Error {
+            msg: "tous les thermomètre sont déconnecté".to_string(),
+            severity: ErrorSeverity::Error,
+        };
+        Some(error)
+    } else if status
+        .iter()
+        .any(|(_, thermometer)| thermometer.is_disconnected())
+    {
+        let error = Error {
+            msg: "certain thermomètre sont déconnecté".to_string(),
+            severity: ErrorSeverity::Warning,
+        };
+        Some(error)
+    } else {
+        None
+    }
+}
 
 fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, Thermometer>>) {
     let topic_path: Vec<_> = msg.topic.split('/').collect();
