@@ -1,12 +1,23 @@
 $primary-color: #005ea2;
-$primary-background-color: #FFFF;
-$shadow-color: #AAAA;
+$primary-background-color: #ffff;
+$shadow-color: #aaaa;
+
+$info-background: #e7f6f8;
+$info-accent: #00bde3;
+
+$warning-background: #faf3d1;
+$warning-accent: #ffbe2e;
+
+$error-background: #f4e3db;
+$error-accent: #d54309;
+
+$success-background: #ecf3ec;
+$success-accent: #00a91c;
 
 * {
   padding: 0;
   margin: 0;
 }
-
 
 body {
   font-family: sans-serif;
@@ -18,30 +29,99 @@ table {
   border-collapse: collapse;
 }
 
-
 h2 {
   margin: 1.5rem 1.5rem 0.5rem;
 }
 
 p {
-  margin: 0.5rem 1.5rem 0.5rem ;
+  margin: 0.5rem 1.5rem 0.5rem;
+}
+
+.alert-info,
+.alert-warning,
+.alert-error,
+.alert-success {
+  padding: 1rem 1.25rem 1rem 4rem;
+  position: relative;
+  margin: 1rem 1.25rem 0.75rem;
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-size: 1.33rem;
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+  }
+
+  p {
+    margin-bottom: 0;
+    margin-top: 0;
+  }
+
+  ::before {
+    display: block;
+    content: "";
+    width: 2rem;
+    height: 2rem;
+    position: absolute;
+    left: 1rem;
+    top: 1rem;
+  }
+}
+
+.alert-info {
+  background-color: $info-background;
+  border-left: 0.5rem solid $info-accent;
+
+  ::before {
+    background: url(assets/info.svg) no-repeat center/contain;
+  }
+}
+
+.alert-warning {
+  background-color: $warning-background;
+  border-left: 0.5rem solid $warning-accent;
+
+  ::before {
+    background: url(assets/warning.svg) no-repeat center/contain;
+  }
+}
+
+.alert-error {
+  background-color: $error-background;
+  border-left: 0.5rem solid $error-accent;
+
+  ::before {
+    background: url(assets/error.svg) no-repeat center/contain;
+  }
+}
+
+.alert-success {
+  background-color: $success-background;
+  border-left: 0.5rem solid $success-accent;
+
+  ::before {
+    background: url(assets/check_circle.svg) no-repeat center/contain;
+  }
 }
 
 .card-group {
   display: grid;
-  grid-template-columns: 1fr 1fr ;
+  grid-template-columns: 1fr 1fr;
   margin: auto;
   margin-bottom: 1.5rem;
   max-width: 60rem;
 
-
   .card {
     background-color: $primary-background-color;
-    box-shadow: 2px 2px 5px 1.5px  $shadow-color;
+    box-shadow: 2px 2px 5px 1.5px $shadow-color;
 
     font-size: 1.06rem;
 
-    margin:  0.5rem 0.5rem 1rem;
+    margin: 0.5rem 0.5rem 1rem;
     border-radius: 1rem;
   }
 }
