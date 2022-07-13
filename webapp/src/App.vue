@@ -1,4 +1,5 @@
 <template>
+  <alertBox />
   <div class="card-group">
     <div
       class="card"
@@ -17,7 +18,9 @@
 <script lang="ts">
 import { defineComponent } from "vue";
 import type { thermometer } from "./thermometer";
+
 import thermometerCard from "./components/thermometer-card.vue";
+import alertBox from "./components/alert-box.vue";
 
 export default defineComponent({
   data() {
@@ -39,6 +42,7 @@ export default defineComponent({
 
   components: {
     thermometerCard,
+    alertBox,
   },
 });
 </script>
