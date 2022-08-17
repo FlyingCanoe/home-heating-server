@@ -108,6 +108,31 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
     }
 }
 
+async fn publish_error(
+    client: &AsyncClient,
+    thermometer: &mut watch::Sender<HashMap<String, Thermometer>>,
+) {
+    let error = get_error(&thermometer.borrow());
+
+    if let Some(error) = error {
+        match error.severity {
+            ErrorSeverity::Warning => client
+                .publish("error", QoS::AtLeastOnce, true, "warning")
+                .await
+                .unwrap(),
+            ErrorSeverity::Error => client
+                .publish("error", QoS::AtMostOnce, false, "error")
+                .await
+                .unwrap(),
+        }
+    } else {
+        client
+            .publish("error", QoS::AtLeastOnce, true, "")
+            .await
+            .unwrap();
+    }
+}
+
 async fn handle_webserver_request(
     receiver: &mut mpsc::UnboundedReceiver<(String, f64)>,
     client: &AsyncClient,
@@ -126,7 +151,7 @@ async fn handle_webserver_request(
 }
 
 pub(crate) fn start_control_server(
-    mut sender: watch::Sender<HashMap<String, Thermometer>>,
+    mut thermometer: watch::Sender<HashMap<String, Thermometer>>,
     mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -134,14 +159,20 @@ pub(crate) fn start_control_server(
         let (client, mut connection) = AsyncClient::new(mqtt_options, 10);
 
         client
-            .subscribe("thermometer/#".to_string(), QoS::ExactlyOnce)
+            .subscribe("thermometer/#".to_string(), QoS::AtLeastOnce)
             .await
             .unwrap();
 
+        let mut last_error_publish = std::time::Instant::now();
         loop {
-            if let Event::Incoming(Packet::Publish(msg)) = connection.poll().await.unwrap() {
-                handle_msg(msg, &mut sender)
+            if last_error_publish.elapsed() >= std::time::Duration::from_secs(10) {
+                publish_error(&client, &mut thermometer).await;
+                last_error_publish = std::time::Instant::now();
             }
+            if let Event::Incoming(Packet::Publish(msg)) = connection.poll().await.unwrap() {
+                handle_msg(msg, &mut thermometer)
+            }
+
             handle_webserver_request(&mut receiver, &client).await;
         }
     })
