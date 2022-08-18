@@ -110,7 +110,7 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
 
 async fn publish_error(
     client: &AsyncClient,
-    thermometer: &mut watch::Sender<HashMap<String, Thermometer>>,
+    thermometer: &watch::Receiver<HashMap<String, Thermometer>>,
 ) {
     let error = get_error(&thermometer.borrow());
 
@@ -150,30 +150,35 @@ async fn handle_webserver_request(
     };
 }
 
-pub(crate) fn start_control_server(
-    mut thermometer: watch::Sender<HashMap<String, Thermometer>>,
+pub(crate) async fn start_control_server(
+    mut thermometer_sender: watch::Sender<HashMap<String, Thermometer>>,
     mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
-) -> tokio::task::JoinHandle<()> {
+) {
+    let mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
+    let (client, mut connection) = AsyncClient::new(mqtt_options, 10);
+
+    client
+        .subscribe("thermometer/#".to_string(), QoS::AtLeastOnce)
+        .await
+        .unwrap();
+
+    let thermometer_watcher = thermometer_sender.subscribe();
     tokio::spawn(async move {
-        let mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
-        let (client, mut connection) = AsyncClient::new(mqtt_options, 10);
-
-        client
-            .subscribe("thermometer/#".to_string(), QoS::AtLeastOnce)
-            .await
-            .unwrap();
-
+        loop {
+            if let Event::Incoming(Packet::Publish(msg)) = connection.poll().await.unwrap() {
+                handle_msg(msg, &mut thermometer_sender)
+            }
+        }
+    });
+    tokio::spawn(async move {
         let mut last_error_publish = std::time::Instant::now();
         loop {
             if last_error_publish.elapsed() >= std::time::Duration::from_secs(10) {
-                publish_error(&client, &mut thermometer).await;
+                publish_error(&client, &thermometer_watcher).await;
                 last_error_publish = std::time::Instant::now();
-            }
-            if let Event::Incoming(Packet::Publish(msg)) = connection.poll().await.unwrap() {
-                handle_msg(msg, &mut thermometer)
             }
 
             handle_webserver_request(&mut receiver, &client).await;
         }
-    })
+    });
 }

@@ -69,5 +69,7 @@ async fn main() {
 
     start_web_server(watcher.clone(), control_tx, db_request_tx, db_response_rx);
     start_db(watcher, db_request_rx, db_response_tx);
-    start_control_server(watch, control_rx).await.unwrap();
+    start_control_server(watch, control_rx).await;
+
+    loop {}
 }
