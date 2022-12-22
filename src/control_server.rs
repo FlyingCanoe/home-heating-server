@@ -185,9 +185,37 @@ pub(crate) async fn start_control_server(
                 publish_error(&client, &s, &mut error_sender).await;
 
                 last_error_publish = std::time::Instant::now();
+                update_heater_control(&client, &s).await;
             }
 
             handle_webserver_request(&mut receiver, &client).await;
         }
     });
+}
+
+async fn update_heater_control(
+    client: &AsyncClient,
+    thermometers: &watch::Receiver<HashMap<String, Thermometer>>,
+) {
+    let heating_neaded = thermometers.borrow().iter().any(|(_, thermometer)| {
+        if let (Some(last_measurement), Some(target)) =
+            (thermometer.last_measurement, thermometer.target_temperature)
+        {
+            last_measurement < target
+        } else {
+            false
+        }
+    });
+
+    if heating_neaded {
+        client
+            .publish("heating", QoS::AtLeastOnce, false, "on")
+            .await
+            .unwrap();
+    } else {
+        client
+            .publish("heating", QoS::AtLeastOnce, false, "off")
+            .await
+            .unwrap();
+    }
 }
