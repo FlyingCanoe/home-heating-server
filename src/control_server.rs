@@ -22,8 +22,17 @@ pub enum ErrorSeverity {
     Error,
 }
 
-fn get_error(status: &HashMap<String, Thermometer>) -> Option<Error> {
-    if status
+fn get_error(
+    status: &HashMap<String, Thermometer>,
+    heater_connected: &watch::Receiver<bool>,
+) -> Option<Error> {
+    if !*heater_connected.borrow() {
+        let error = Error {
+            msg: "le chauffage est déconnecté".to_string(),
+            severity: ErrorSeverity::Error,
+        };
+        Some(error)
+    } else if status
         .iter()
         .all(|(_, thermometer)| thermometer.is_disconnected())
     {
@@ -46,9 +55,21 @@ fn get_error(status: &HashMap<String, Thermometer>) -> Option<Error> {
     }
 }
 
-fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, Thermometer>>) {
+fn handle_msg(
+    msg: rumqttc::Publish,
+    sender: &mut watch::Sender<HashMap<String, Thermometer>>,
+    heater_connected_mut: &mut watch::Sender<bool>,
+) {
     let topic_path: Vec<_> = msg.topic.split('/').collect();
     let payload = String::from_utf8(msg.payload.to_vec()).expect("bad message");
+
+    if msg.topic == "heater/status" {
+        match payload.as_str() {
+            "connected" => heater_connected_mut.send(true).unwrap(),
+            "disconnected" => heater_connected_mut.send(false).unwrap(),
+            _ => panic!("bad msg"),
+        }
+    }
 
     if topic_path[0] == "thermometer" && topic_path.len() == 3 {
         let name = topic_path[1];
@@ -109,8 +130,9 @@ async fn publish_error(
     client: &AsyncClient,
     thermometer: &watch::Receiver<HashMap<String, Thermometer>>,
     error_mut: &mut watch::Sender<Option<Error>>,
+    heater_connected: &watch::Receiver<bool>,
 ) {
-    let error = get_error(&thermometer.borrow());
+    let error = get_error(&thermometer.borrow(), heater_connected);
 
     if let Some(ref error) = error {
         match &error.severity {
@@ -169,11 +191,17 @@ pub(crate) async fn start_control_server(
         .await
         .unwrap();
 
+    client
+        .subscribe("heater/status", QoS::AtLeastOnce)
+        .await
+        .unwrap();
+
     let thermometer_watcher = thermometer_sender.subscribe();
+    let (mut heater_connected_mut, heater_connected) = watch::channel(false);
     tokio::spawn(async move {
         loop {
             if let Event::Incoming(Packet::Publish(msg)) = connection.poll().await.unwrap() {
-                handle_msg(msg, &mut thermometer_sender)
+                handle_msg(msg, &mut thermometer_sender, &mut heater_connected_mut)
             }
         }
     });
@@ -182,7 +210,7 @@ pub(crate) async fn start_control_server(
         let s = thermometer_watcher;
         loop {
             if last_error_publish.elapsed() >= std::time::Duration::from_secs(2) {
-                publish_error(&client, &s, &mut error_sender).await;
+                publish_error(&client, &s, &mut error_sender, &heater_connected).await;
 
                 last_error_publish = std::time::Instant::now();
                 update_heater_control(&client, &s).await;
