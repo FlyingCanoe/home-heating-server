@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use actix_web::web::Bytes;
+use rumqttc::LastWill;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde::Serialize;
 use tokio::sync::mpsc;
@@ -148,7 +150,13 @@ pub(crate) async fn start_control_server(
     mut thermometer_sender: watch::Sender<HashMap<String, Thermometer>>,
     mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
 ) {
-    let mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
+    let mut mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
+    mqtt_options.set_last_will(LastWill {
+        topic: "error".to_string(),
+        message: Bytes::from_static(b"error"),
+        qos: QoS::AtLeastOnce,
+        retain: true,
+    });
     let (client, mut connection) = AsyncClient::new(mqtt_options, 10);
 
     client
