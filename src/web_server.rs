@@ -8,16 +8,15 @@ use actix_web::{http, web, App, HttpResponse, HttpServer};
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
-use crate::control_server::get_error;
+use crate::control_server::Error;
 use crate::db::{DbRequest, DbResponse};
 use crate::Thermometer;
 
 #[actix_web::get("/rest-api/get-error")]
 async fn serve_error(
-    receiver: web::Data<watch::Receiver<HashMap<String, Thermometer>>>,
+    error: web::Data<watch::Receiver<Option<Error>>>,
 ) -> Result<HttpResponse, http::Error> {
-    let error = get_error(&receiver.borrow());
-    Ok(HttpResponse::Ok().json(error))
+    Ok(HttpResponse::Ok().json(error.borrow().clone()))
 }
 
 #[actix_web::get("/rest-api/thermometer-list")]
@@ -77,7 +76,8 @@ async fn thermometer_history(
 }
 
 pub(crate) fn start_web_server(
-    watcher: watch::Receiver<HashMap<String, Thermometer>>,
+    thermometer: watch::Receiver<HashMap<String, Thermometer>>,
+    error: watch::Receiver<Option<Error>>,
     control_tx: mpsc::UnboundedSender<(String, f64)>,
     db_tx: mpsc::UnboundedSender<DbRequest>,
     db_rx: mpsc::UnboundedReceiver<DbResponse>,
@@ -95,8 +95,9 @@ pub(crate) fn start_web_server(
                     App::new()
                         .wrap(Logger::new("%r %D"))
                         .app_data(web::Data::new(db_conn.clone()))
-                        .app_data(web::Data::new(watcher.clone()))
+                        .app_data(web::Data::new(thermometer.clone()))
                         .app_data(web::Data::new(control_tx.clone()))
+                        .app_data(web::Data::new(error.clone()))
                         .service(serve_error)
                         .service(thermometer_history)
                         .service(change_thermometer_target)

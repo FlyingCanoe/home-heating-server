@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use actix_web::web::Bytes;
 use rumqttc::LastWill;
@@ -21,7 +22,7 @@ pub enum ErrorSeverity {
     Error,
 }
 
-pub fn get_error(status: &HashMap<String, Thermometer>) -> Option<Error> {
+fn get_error(status: &HashMap<String, Thermometer>) -> Option<Error> {
     if status
         .iter()
         .all(|(_, thermometer)| thermometer.is_disconnected())
@@ -107,11 +108,12 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
 async fn publish_error(
     client: &AsyncClient,
     thermometer: &watch::Receiver<HashMap<String, Thermometer>>,
+    error_mut: &mut watch::Sender<Option<Error>>,
 ) {
     let error = get_error(&thermometer.borrow());
 
-    if let Some(error) = error {
-        match error.severity {
+    if let Some(ref error) = error {
+        match &error.severity {
             ErrorSeverity::Warning => client
                 .publish("error", QoS::AtLeastOnce, true, "warning")
                 .await
@@ -127,6 +129,8 @@ async fn publish_error(
             .await
             .unwrap();
     }
+
+    error_mut.send(error).unwrap();
 }
 
 async fn handle_webserver_request(
@@ -148,6 +152,7 @@ async fn handle_webserver_request(
 
 pub(crate) async fn start_control_server(
     mut thermometer_sender: watch::Sender<HashMap<String, Thermometer>>,
+    mut error_sender: watch::Sender<Option<Error>>,
     mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
 ) {
     let mut mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
@@ -172,11 +177,13 @@ pub(crate) async fn start_control_server(
             }
         }
     });
-    tokio::spawn(async move {
+    tokio::task::spawn(async move {
         let mut last_error_publish = std::time::Instant::now();
+        let s = thermometer_watcher;
         loop {
-            if last_error_publish.elapsed() >= std::time::Duration::from_secs(10) {
-                publish_error(&client, &thermometer_watcher).await;
+            if last_error_publish.elapsed() >= std::time::Duration::from_secs(2) {
+                publish_error(&client, &s, &mut error_sender).await;
+
                 last_error_publish = std::time::Instant::now();
             }
 
