@@ -45,13 +45,13 @@ pub fn get_error(status: &HashMap<String, Thermometer>) -> Option<Error> {
 
 fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, Thermometer>>) {
     let topic_path: Vec<_> = msg.topic.split('/').collect();
+    let payload = String::from_utf8(msg.payload.to_vec()).expect("bad message");
 
     if topic_path[0] == "thermometer" && topic_path.len() == 3 {
         let name = topic_path[1];
         let msg_type = topic_path[2];
         match msg_type {
             "status" => {
-                let payload = String::from_utf8(msg.payload.to_vec()).expect("bad message");
                 let status = match payload.as_str() {
                     "connected" => ThermometerStatus::Connected,
                     "disconnected" => ThermometerStatus::Disconnected,
@@ -70,10 +70,7 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
                 });
             }
             "measurement" => {
-                let measurement: f64 = String::from_utf8(msg.payload.to_vec())
-                    .expect("bad message")
-                    .parse()
-                    .expect("bad message");
+                let measurement: f64 = payload.parse().expect("bad message");
 
                 sender.send_modify(|thermometer_list| {
                     thermometer_list
@@ -87,10 +84,7 @@ fn handle_msg(msg: rumqttc::Publish, sender: &mut watch::Sender<HashMap<String, 
                 });
             }
             "target-temperature" => {
-                let target_temperature: f64 = String::from_utf8(msg.payload.to_vec())
-                    .expect("bad msg")
-                    .parse()
-                    .expect("bad msg");
+                let target_temperature: f64 = payload.parse().expect("bad msg");
 
                 sender.send_modify(|thermometer_list| {
                     thermometer_list
