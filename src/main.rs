@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -11,6 +12,8 @@ mod web_server;
 use control_server::start_control_server;
 use db::start_db;
 use web_server::start_web_server;
+
+const SLEEP_TIME: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Thermometer {
@@ -78,5 +81,7 @@ async fn main() {
     start_db(watcher, db_request_rx, db_response_tx);
     start_control_server(watch, error_watch, control_rx).await;
 
-    loop {}
+    loop {
+        tokio::time::sleep(SLEEP_TIME).await
+    }
 }

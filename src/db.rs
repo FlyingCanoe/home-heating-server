@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::thread;
 use std::time::Duration;
 
 use chrono::DateTime;
@@ -8,6 +9,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::Thermometer;
 use crate::ThermometerStatus;
+use crate::SLEEP_TIME;
 
 #[derive(Clone, Debug)]
 
@@ -105,5 +107,7 @@ pub(crate) fn start_db(
 
             last_history_update = std::time::Instant::now();
         }
+
+        thread::sleep(SLEEP_TIME)
     });
 }

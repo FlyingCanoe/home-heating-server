@@ -8,6 +8,8 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
+use crate::SLEEP_TIME;
+
 use super::{Thermometer, ThermometerStatus};
 
 #[derive(Debug, Clone, Serialize)]
@@ -217,6 +219,8 @@ pub(crate) async fn start_control_server(
             }
 
             handle_webserver_request(&mut receiver, &client).await;
+
+            tokio::time::sleep(SLEEP_TIME).await;
         }
     });
 }
