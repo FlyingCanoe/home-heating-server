@@ -1,16 +1,18 @@
 use std::collections::HashMap;
 
-use actix_web::web::Bytes;
-use rumqttc::LastWill;
-use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use serde::Serialize;
+use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::watch;
 
 use crate::SLEEP_TIME;
 
+use self::mqtt_handle::MqttHandle;
+
 use super::{Thermometer, ThermometerStatus};
+use mqtt_handle::MqttMsg;
+
+mod mqtt_handle;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Error {
@@ -29,13 +31,6 @@ pub struct ControlState {
     pub thermometer_list: HashMap<String, Thermometer>,
     pub error: Option<Error>,
     heater_connected: bool,
-}
-
-#[derive(Debug, Clone)]
-struct MqttMsg {
-    topic: String,
-    path: Vec<String>,
-    payload: String,
 }
 
 impl ControlState {
@@ -142,28 +137,11 @@ fn handle_msg(msg: MqttMsg, sender: &mut watch::Sender<ControlState>) {
     }
 }
 
-async fn publish_error(client: &AsyncClient, state: &mut watch::Sender<ControlState>) {
+async fn publish_error(mqtt_handle: &MqttHandle, state: &mut watch::Sender<ControlState>) {
     state.send_modify(|state| state.update_error());
 
     let error = state.borrow().error.clone();
-
-    if let Some(ref error) = error {
-        match &error.severity {
-            ErrorSeverity::Warning => client
-                .publish("error", QoS::AtLeastOnce, true, "warning")
-                .await
-                .unwrap(),
-            ErrorSeverity::Error => client
-                .publish("error", QoS::AtMostOnce, false, "error")
-                .await
-                .unwrap(),
-        }
-    } else {
-        client
-            .publish("error", QoS::AtLeastOnce, true, "")
-            .await
-            .unwrap();
-    }
+    mqtt_handle.publish_error(error).await
 }
 
 pub(crate) async fn start_control_server(
@@ -172,24 +150,22 @@ pub(crate) async fn start_control_server(
 ) {
     let thermometer_watcher = state.subscribe();
 
-    let (mut client, event_loop) = setup_mqtt().await;
-
-    let mut msg_queue = start_event_loop(event_loop).await;
+    let mut mqtt_handle = MqttHandle::new().await;
     tokio::task::spawn(async move {
         let mut last_error_publish = std::time::Instant::now();
         let s = thermometer_watcher;
         loop {
-            let msg_list = read_mqtt_msg_list(&mut msg_queue);
+            let msg_list = mqtt_handle.read_mqtt_msg_list();
             let request_list = read_request_list(&mut receiver);
 
-            handle_request_list(&mut client, request_list).await;
+            handle_request_list(&mut mqtt_handle, request_list).await;
             handle_mqtt_msg_list(msg_list, &mut state).await;
 
             if last_error_publish.elapsed() >= std::time::Duration::from_secs(2) {
-                publish_error(&client, &mut state).await;
+                publish_error(&mqtt_handle, &mut state).await;
 
                 last_error_publish = std::time::Instant::now();
-                update_heater_control(&client, &s).await;
+                update_heater_control(&mqtt_handle, &s).await;
             }
 
             tokio::time::sleep(SLEEP_TIME).await;
@@ -197,17 +173,11 @@ pub(crate) async fn start_control_server(
     });
 }
 
-async fn handle_request_list(client: &mut AsyncClient, request_list: Vec<(String, f64)>) {
+async fn handle_request_list(mqtt_handle: &mut MqttHandle, request_list: Vec<(String, f64)>) {
     for (name, target_temperature) in request_list {
-        client
-            .publish(
-                format!("thermometer/{name}/change-target"),
-                QoS::ExactlyOnce,
-                false,
-                target_temperature.to_string(),
-            )
+        mqtt_handle
+            .send_change_temperature_msg(name, target_temperature)
             .await
-            .unwrap();
     }
 }
 
@@ -215,20 +185,6 @@ async fn handle_mqtt_msg_list(msg_list: Vec<MqttMsg>, sender: &mut watch::Sender
     for msg in msg_list {
         handle_msg(msg, sender)
     }
-}
-
-fn read_mqtt_msg_list(msg_queue: &mut UnboundedReceiver<MqttMsg>) -> Vec<MqttMsg> {
-    let mut output = vec![];
-
-    loop {
-        match msg_queue.try_recv() {
-            Ok(msg) => output.push(msg),
-            Err(TryRecvError::Empty) => break,
-            Err(_) => panic!(),
-        }
-    }
-
-    output
 }
 
 fn read_request_list(
@@ -247,49 +203,8 @@ fn read_request_list(
     output
 }
 
-async fn setup_mqtt() -> (AsyncClient, EventLoop) {
-    let mut mqtt_options = MqttOptions::new("server", "127.0.0.1", 1883);
-    mqtt_options.set_last_will(LastWill {
-        topic: "error".to_string(),
-        message: Bytes::from_static(b"error"),
-        qos: QoS::AtLeastOnce,
-        retain: true,
-    });
-    let (client, connection) = AsyncClient::new(mqtt_options, 10);
-
-    client
-        .subscribe("thermometer/#".to_string(), QoS::AtLeastOnce)
-        .await
-        .unwrap();
-
-    client
-        .subscribe("heater/status", QoS::AtLeastOnce)
-        .await
-        .unwrap();
-    (client, connection)
-}
-
-async fn start_event_loop(mut event_loop: EventLoop) -> mpsc::UnboundedReceiver<MqttMsg> {
-    let (tx, rx) = mpsc::unbounded_channel();
-
-    tokio::spawn(async move {
-        loop {
-            if let Event::Incoming(Packet::Publish(msg)) = event_loop.poll().await.unwrap() {
-                let msg = MqttMsg {
-                    path: msg.topic.split("/").map(String::from).collect(),
-                    topic: msg.topic,
-                    payload: String::from_utf8(msg.payload.to_vec()).expect("bad msg"),
-                };
-                tx.send(msg).unwrap();
-            }
-        }
-    });
-
-    rx
-}
-
-async fn update_heater_control(client: &AsyncClient, state: &watch::Receiver<ControlState>) {
-    let heating_neaded = state
+async fn update_heater_control(mqtt_handle: &MqttHandle, state: &watch::Receiver<ControlState>) {
+    let heating_needed = state
         .borrow()
         .thermometer_list
         .iter()
@@ -303,15 +218,5 @@ async fn update_heater_control(client: &AsyncClient, state: &watch::Receiver<Con
             }
         });
 
-    if heating_neaded {
-        client
-            .publish("heating", QoS::AtLeastOnce, false, "on")
-            .await
-            .unwrap();
-    } else {
-        client
-            .publish("heating", QoS::AtLeastOnce, false, "off")
-            .await
-            .unwrap();
-    }
+    mqtt_handle.publish_heating_status(heating_needed).await;
 }
