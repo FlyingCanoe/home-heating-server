@@ -24,6 +24,13 @@ pub enum ErrorSeverity {
     Error,
 }
 
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ControlState {
+    pub thermometer_list: HashMap<String, Thermometer>,
+    pub error: Option<Error>,
+    heater_connected: bool,
+}
+
 #[derive(Debug, Clone)]
 struct MqttMsg {
     topic: String,
@@ -31,48 +38,48 @@ struct MqttMsg {
     payload: String,
 }
 
-fn get_error(
-    status: &HashMap<String, Thermometer>,
-    heater_connected: &watch::Receiver<bool>,
-) -> Option<Error> {
-    if !*heater_connected.borrow() {
-        let error = Error {
-            msg: "le chauffage est déconnecté".to_string(),
-            severity: ErrorSeverity::Error,
-        };
-        Some(error)
-    } else if status
-        .iter()
-        .all(|(_, thermometer)| thermometer.is_disconnected())
-    {
-        let error = Error {
-            msg: "tous les thermomètre sont déconnecté".to_string(),
-            severity: ErrorSeverity::Error,
-        };
-        Some(error)
-    } else if status
-        .iter()
-        .any(|(_, thermometer)| thermometer.is_disconnected())
-    {
-        let error = Error {
-            msg: "certain thermomètre sont déconnecté".to_string(),
-            severity: ErrorSeverity::Warning,
-        };
-        Some(error)
-    } else {
-        None
+impl ControlState {
+    fn update_error(&mut self) {
+        let new_error;
+        if !self.heater_connected {
+            let error = Error {
+                msg: "le chauffage est déconnecté".to_string(),
+                severity: ErrorSeverity::Error,
+            };
+            new_error = Some(error)
+        } else if self
+            .thermometer_list
+            .iter()
+            .all(|(_, thermometer)| thermometer.is_disconnected())
+        {
+            let error = Error {
+                msg: "tous les thermomètre sont déconnecté".to_string(),
+                severity: ErrorSeverity::Error,
+            };
+            new_error = Some(error)
+        } else if self
+            .thermometer_list
+            .iter()
+            .any(|(_, thermometer)| thermometer.is_disconnected())
+        {
+            let error = Error {
+                msg: "certain thermomètre sont déconnecté".to_string(),
+                severity: ErrorSeverity::Warning,
+            };
+            new_error = Some(error)
+        } else {
+            new_error = None
+        }
+
+        self.error = new_error;
     }
 }
 
-fn handle_msg(
-    msg: MqttMsg,
-    sender: &mut watch::Sender<HashMap<String, Thermometer>>,
-    heater_connected_mut: &mut watch::Sender<bool>,
-) {
+fn handle_msg(msg: MqttMsg, sender: &mut watch::Sender<ControlState>) {
     if msg.topic == "heater/status" {
         match msg.payload.as_str() {
-            "connected" => heater_connected_mut.send(true).unwrap(),
-            "disconnected" => heater_connected_mut.send(false).unwrap(),
+            "connected" => sender.send_modify(|state| state.heater_connected = true),
+            "disconnected" => sender.send_modify(|state| state.heater_connected = false),
             _ => panic!("bad msg"),
         }
     }
@@ -88,8 +95,9 @@ fn handle_msg(
                     _ => panic!("bad message {:?}", msg),
                 };
 
-                sender.send_modify(|thermometer_list| {
-                    thermometer_list
+                sender.send_modify(|state| {
+                    state
+                        .thermometer_list
                         .entry(name.to_string())
                         .or_insert(Thermometer {
                             status,
@@ -102,8 +110,9 @@ fn handle_msg(
             "measurement" => {
                 let measurement: f64 = msg.payload.parse().expect("bad message");
 
-                sender.send_modify(|thermometer_list| {
-                    thermometer_list
+                sender.send_modify(|state| {
+                    state
+                        .thermometer_list
                         .entry(name.to_string())
                         .or_insert(Thermometer {
                             status: ThermometerStatus::Disconnected,
@@ -116,8 +125,9 @@ fn handle_msg(
             "target-temperature" => {
                 let target_temperature: f64 = msg.payload.parse().expect("bad msg");
 
-                sender.send_modify(|thermometer_list| {
-                    thermometer_list
+                sender.send_modify(|state| {
+                    state
+                        .thermometer_list
                         .entry(name.to_string())
                         .or_insert(Thermometer {
                             status: ThermometerStatus::Disconnected,
@@ -132,13 +142,10 @@ fn handle_msg(
     }
 }
 
-async fn publish_error(
-    client: &AsyncClient,
-    thermometer: &watch::Receiver<HashMap<String, Thermometer>>,
-    error_mut: &mut watch::Sender<Option<Error>>,
-    heater_connected: &watch::Receiver<bool>,
-) {
-    let error = get_error(&thermometer.borrow(), heater_connected);
+async fn publish_error(client: &AsyncClient, state: &mut watch::Sender<ControlState>) {
+    state.send_modify(|state| state.update_error());
+
+    let error = state.borrow().error.clone();
 
     if let Some(ref error) = error {
         match &error.severity {
@@ -157,17 +164,13 @@ async fn publish_error(
             .await
             .unwrap();
     }
-
-    error_mut.send(error).unwrap();
 }
 
 pub(crate) async fn start_control_server(
-    mut thermometer_sender: watch::Sender<HashMap<String, Thermometer>>,
-    mut error_sender: watch::Sender<Option<Error>>,
+    mut state: watch::Sender<ControlState>,
     mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
 ) {
-    let thermometer_watcher = thermometer_sender.subscribe();
-    let (mut heater_connected_mut, heater_connected) = watch::channel(false);
+    let thermometer_watcher = state.subscribe();
 
     let (mut client, event_loop) = setup_mqtt().await;
 
@@ -180,11 +183,10 @@ pub(crate) async fn start_control_server(
             let request_list = read_request_list(&mut receiver);
 
             handle_request_list(&mut client, request_list).await;
-            handle_mqtt_msg_list(msg_list, &mut thermometer_sender, &mut heater_connected_mut)
-                .await;
+            handle_mqtt_msg_list(msg_list, &mut state).await;
 
             if last_error_publish.elapsed() >= std::time::Duration::from_secs(2) {
-                publish_error(&client, &s, &mut error_sender, &heater_connected).await;
+                publish_error(&client, &mut state).await;
 
                 last_error_publish = std::time::Instant::now();
                 update_heater_control(&client, &s).await;
@@ -209,13 +211,9 @@ async fn handle_request_list(client: &mut AsyncClient, request_list: Vec<(String
     }
 }
 
-async fn handle_mqtt_msg_list(
-    msg_list: Vec<MqttMsg>,
-    sender: &mut watch::Sender<HashMap<String, Thermometer>>,
-    heater_connected_mut: &mut watch::Sender<bool>,
-) {
+async fn handle_mqtt_msg_list(msg_list: Vec<MqttMsg>, sender: &mut watch::Sender<ControlState>) {
     for msg in msg_list {
-        handle_msg(msg, sender, heater_connected_mut)
+        handle_msg(msg, sender)
     }
 }
 
@@ -290,19 +288,20 @@ async fn start_event_loop(mut event_loop: EventLoop) -> mpsc::UnboundedReceiver<
     rx
 }
 
-async fn update_heater_control(
-    client: &AsyncClient,
-    thermometers: &watch::Receiver<HashMap<String, Thermometer>>,
-) {
-    let heating_neaded = thermometers.borrow().iter().any(|(_, thermometer)| {
-        if let (Some(last_measurement), Some(target)) =
-            (thermometer.last_measurement, thermometer.target_temperature)
-        {
-            last_measurement < target
-        } else {
-            false
-        }
-    });
+async fn update_heater_control(client: &AsyncClient, state: &watch::Receiver<ControlState>) {
+    let heating_neaded = state
+        .borrow()
+        .thermometer_list
+        .iter()
+        .any(|(_, thermometer)| {
+            if let (Some(last_measurement), Some(target)) =
+                (thermometer.last_measurement, thermometer.target_temperature)
+            {
+                last_measurement < target
+            } else {
+                false
+            }
+        });
 
     if heating_neaded {
         client

@@ -1,6 +1,6 @@
-use std::collections::HashMap;
 use std::time::Duration;
 
+use control_server::ControlState;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::watch;
@@ -64,22 +64,15 @@ async fn main() {
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    let (watch, watcher) = watch::channel(HashMap::<String, Thermometer>::new());
-    let (error_watch, error_watcher) = watch::channel(None);
+    let (watch, watcher) = watch::channel(ControlState::default());
 
     let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
     let (db_request_tx, db_request_rx) = tokio::sync::mpsc::unbounded_channel();
     let (db_response_tx, db_response_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    start_web_server(
-        watcher.clone(),
-        error_watcher,
-        control_tx,
-        db_request_tx,
-        db_response_rx,
-    );
+    start_web_server(watcher.clone(), control_tx, db_request_tx, db_response_rx);
     start_db(watcher, db_request_rx, db_response_tx);
-    start_control_server(watch, error_watch, control_rx).await;
+    start_control_server(watch, control_rx).await;
 
     loop {
         tokio::time::sleep(SLEEP_TIME).await

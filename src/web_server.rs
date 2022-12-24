@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -8,23 +7,23 @@ use actix_web::{http, web, App, HttpResponse, HttpServer};
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 
-use crate::control_server::Error;
+use crate::control_server::ControlState;
 use crate::db::{DbRequest, DbResponse};
-use crate::Thermometer;
 
 #[actix_web::get("/rest-api/get-error")]
 async fn serve_error(
-    error: web::Data<watch::Receiver<Option<Error>>>,
+    control_state: web::Data<watch::Receiver<ControlState>>,
 ) -> Result<HttpResponse, http::Error> {
-    Ok(HttpResponse::Ok().json(error.borrow().clone()))
+    Ok(HttpResponse::Ok().json(control_state.borrow().error.clone()))
 }
 
 #[actix_web::get("/rest-api/thermometer-list")]
 async fn thermometer_list(
-    receiver: web::Data<watch::Receiver<HashMap<String, Thermometer>>>,
+    control_state: web::Data<watch::Receiver<ControlState>>,
 ) -> Result<HttpResponse, http::Error> {
-    let thermometer_list: Vec<_> = (receiver)
+    let thermometer_list: Vec<_> = control_state
         .borrow()
+        .thermometer_list
         .clone()
         .into_iter()
         .map(|(name, _)| name)
@@ -34,10 +33,14 @@ async fn thermometer_list(
 
 #[actix_web::get("/rest-api/thermometer-status/{name}")]
 async fn thermometer_status(
-    receiver: web::Data<watch::Receiver<HashMap<String, Thermometer>>>,
+    control_state: web::Data<watch::Receiver<ControlState>>,
     name: web::Path<String>,
 ) -> Result<HttpResponse, http::Error> {
-    if let Some(thermometer) = receiver.borrow().get(&name.to_string()) {
+    if let Some(thermometer) = control_state
+        .borrow()
+        .thermometer_list
+        .get(&name.to_string())
+    {
         Ok(HttpResponse::Ok().json(thermometer.clone()))
     } else {
         Ok(HttpResponse::NotFound().finish())
@@ -76,8 +79,7 @@ async fn thermometer_history(
 }
 
 pub(crate) fn start_web_server(
-    thermometer: watch::Receiver<HashMap<String, Thermometer>>,
-    error: watch::Receiver<Option<Error>>,
+    control_state: watch::Receiver<ControlState>,
     control_tx: mpsc::UnboundedSender<(String, f64)>,
     db_tx: mpsc::UnboundedSender<DbRequest>,
     db_rx: mpsc::UnboundedReceiver<DbResponse>,
@@ -95,9 +97,8 @@ pub(crate) fn start_web_server(
                     App::new()
                         .wrap(Logger::new("%r %D"))
                         .app_data(web::Data::new(db_conn.clone()))
-                        .app_data(web::Data::new(thermometer.clone()))
+                        .app_data(web::Data::new(control_state.clone()))
                         .app_data(web::Data::new(control_tx.clone()))
-                        .app_data(web::Data::new(error.clone()))
                         .service(serve_error)
                         .service(thermometer_history)
                         .service(change_thermometer_target)

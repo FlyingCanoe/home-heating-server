@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::thread;
 use std::time::Duration;
 
@@ -7,6 +6,7 @@ use chrono::Local;
 use rusqlite::params;
 use tokio::sync::{mpsc, watch};
 
+use crate::control_server::ControlState;
 use crate::Thermometer;
 use crate::ThermometerStatus;
 use crate::SLEEP_TIME;
@@ -80,7 +80,7 @@ fn get_thermometer_history(conn: &rusqlite::Connection, name: &str) -> Vec<(i64,
 }
 
 pub(crate) fn start_db(
-    watch: watch::Receiver<HashMap<String, Thermometer>>,
+    control_state: watch::Receiver<ControlState>,
     mut rx: mpsc::UnboundedReceiver<DbRequest>,
     tx: mpsc::UnboundedSender<DbResponse>,
 ) {
@@ -100,7 +100,7 @@ pub(crate) fn start_db(
         }
 
         if last_history_update.elapsed() >= Duration::from_secs(10) {
-            for (name, thermometer) in watch.borrow().iter() {
+            for (name, thermometer) in control_state.borrow().thermometer_list.iter() {
                 let time = chrono::Local::now();
                 insert_thermometer_history(&conn, name, &time, thermometer)
             }
