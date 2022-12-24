@@ -31,6 +31,7 @@ pub struct ControlState {
     pub thermometer_list: HashMap<String, Thermometer>,
     pub error: Option<Error>,
     heater_connected: bool,
+    heating_needed: bool,
 }
 
 impl ControlState {
@@ -67,6 +68,13 @@ impl ControlState {
         }
 
         self.error = new_error;
+    }
+
+    fn update_heating_needed(&mut self) {
+        self.heating_needed = self
+            .thermometer_list
+            .values()
+            .any(Thermometer::is_below_target)
     }
 
     fn handle_msg(&mut self, msg: MqttMsg) {
@@ -115,38 +123,34 @@ impl ControlState {
             }
         }
     }
-}
 
-async fn publish_error(mqtt_handle: &MqttHandle, state: &mut watch::Sender<ControlState>) {
-    state.send_modify(|state| state.update_error());
+    fn update(&mut self, msg_list: Vec<MqttMsg>) {
+        for msg in msg_list {
+            self.handle_msg(msg)
+        }
 
-    let error = state.borrow().error.clone();
-    mqtt_handle.publish_error(error).await
+        self.update_error();
+        self.update_heating_needed()
+    }
 }
 
 pub(crate) async fn start_control_server(
-    mut state: watch::Sender<ControlState>,
+    state_mut: watch::Sender<ControlState>,
     mut receiver: mpsc::UnboundedReceiver<(String, f64)>,
 ) {
-    let thermometer_watcher = state.subscribe();
-
     let mut mqtt_handle = MqttHandle::new().await;
+    let state_ref = state_mut.subscribe();
+
     tokio::task::spawn(async move {
-        let mut last_error_publish = std::time::Instant::now();
-        let s = thermometer_watcher;
         loop {
             let msg_list = mqtt_handle.read_mqtt_msg_list();
             let request_list = read_request_list(&mut receiver);
 
+            state_mut.send_modify(|state| state.update(msg_list));
+
             handle_request_list(&mut mqtt_handle, request_list).await;
-            handle_mqtt_msg_list(msg_list, &mut state).await;
 
-            if last_error_publish.elapsed() >= std::time::Duration::from_secs(2) {
-                publish_error(&mqtt_handle, &mut state).await;
-
-                last_error_publish = std::time::Instant::now();
-                update_heater_control(&mqtt_handle, &s).await;
-            }
+            mqtt_handle.publish_state(&state_ref).await;
 
             tokio::time::sleep(SLEEP_TIME).await;
         }
@@ -155,18 +159,8 @@ pub(crate) async fn start_control_server(
 
 async fn handle_request_list(mqtt_handle: &mut MqttHandle, request_list: Vec<(String, f64)>) {
     for (name, target_temperature) in request_list {
-        mqtt_handle
-            .send_change_temperature_msg(name, target_temperature)
-            .await
+        mqtt_handle.change_target(name, target_temperature).await
     }
-}
-
-async fn handle_mqtt_msg_list(msg_list: Vec<MqttMsg>, sender: &mut watch::Sender<ControlState>) {
-    sender.send_modify(|state| {
-        for msg in msg_list {
-            state.handle_msg(msg)
-        }
-    })
 }
 
 fn read_request_list(
@@ -183,22 +177,4 @@ fn read_request_list(
     }
 
     output
-}
-
-async fn update_heater_control(mqtt_handle: &MqttHandle, state: &watch::Receiver<ControlState>) {
-    let heating_needed = state
-        .borrow()
-        .thermometer_list
-        .iter()
-        .any(|(_, thermometer)| {
-            if let (Some(last_measurement), Some(target)) =
-                (thermometer.last_measurement, thermometer.target_temperature)
-            {
-                last_measurement < target
-            } else {
-                false
-            }
-        });
-
-    mqtt_handle.publish_heating_status(heating_needed).await;
 }

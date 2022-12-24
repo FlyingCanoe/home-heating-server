@@ -30,6 +30,13 @@ impl Thermometer {
             ThermometerStatus::Disconnected => true,
         }
     }
+
+    pub fn is_below_target(&self) -> bool {
+        let Some(last_measurement) = self.last_measurement else {return false};
+        let Some(target_temperature) = self.target_temperature else {return false};
+
+        last_measurement < target_temperature
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Serialize, Deserialize)]

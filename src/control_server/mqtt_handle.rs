@@ -1,8 +1,11 @@
 use actix_web::web::Bytes;
 use rumqttc::{AsyncClient, Event, EventLoop, LastWill, MqttOptions, Packet, QoS};
-use tokio::sync::mpsc::{self, error::TryRecvError};
+use tokio::sync::{
+    mpsc::{self, error::TryRecvError},
+    watch,
+};
 
-use super::{Error, ErrorSeverity};
+use super::{ControlState, Error, ErrorSeverity};
 
 #[derive(Debug, Clone)]
 pub struct MqttMsg {
@@ -57,7 +60,7 @@ impl MqttHandle {
         output
     }
 
-    pub async fn send_change_temperature_msg(&self, thermometer_name: String, temperature: f64) {
+    pub async fn change_target(&self, thermometer_name: String, temperature: f64) {
         self.client
             .publish(
                 format!("thermometer/{thermometer_name}/change-target"),
@@ -69,9 +72,15 @@ impl MqttHandle {
             .unwrap();
     }
 
-    pub async fn publish_heating_status(&self, on: bool) {
+    pub async fn publish_state(&self, control_state: &watch::Receiver<ControlState>) {
+        let state = control_state.borrow().clone();
+        self.publish_error(state.error).await;
+        self.publish_heating_needed(state.heating_needed).await
+    }
+
+    async fn publish_heating_needed(&self, heating_needed: bool) {
         let payload;
-        if on {
+        if heating_needed {
             payload = "on";
         } else {
             payload = "off";
@@ -83,7 +92,7 @@ impl MqttHandle {
             .unwrap();
     }
 
-    pub async fn publish_error(&self, error: Option<Error>) {
+    async fn publish_error(&self, error: Option<Error>) {
         let payload;
         if let Some(ref error) = error {
             match &error.severity {
