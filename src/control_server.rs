@@ -68,71 +68,51 @@ impl ControlState {
 
         self.error = new_error;
     }
-}
 
-fn handle_msg(msg: MqttMsg, sender: &mut watch::Sender<ControlState>) {
-    if msg.topic == "heater/status" {
-        match msg.payload.as_str() {
-            "connected" => sender.send_modify(|state| state.heater_connected = true),
-            "disconnected" => sender.send_modify(|state| state.heater_connected = false),
-            _ => panic!("bad msg"),
+    fn handle_msg(&mut self, msg: MqttMsg) {
+        if msg.topic == "heater/status" {
+            match msg.payload.as_str() {
+                "connected" => self.heater_connected = true,
+                "disconnected" => self.heater_connected = false,
+                _ => panic!("bad msg"),
+            }
         }
-    }
 
-    if msg.path[0] == "thermometer" && msg.path.len() == 3 {
-        let name = msg.path[1].as_str();
-        let msg_type = msg.path[2].as_str();
-        match msg_type {
-            "status" => {
-                let status = match msg.payload.as_str() {
-                    "connected" => ThermometerStatus::Connected,
-                    "disconnected" => ThermometerStatus::Disconnected,
-                    _ => panic!("bad message {:?}", msg),
-                };
+        if msg.path[0] == "thermometer" && msg.path.len() == 3 {
+            let name = msg.path[1].as_str();
+            let msg_type = msg.path[2].as_str();
 
-                sender.send_modify(|state| {
-                    state
-                        .thermometer_list
-                        .entry(name.to_string())
-                        .or_insert(Thermometer {
-                            status,
-                            last_measurement: None,
-                            target_temperature: None,
-                        })
-                        .status = status;
-                });
+            let thermometer =
+                self.thermometer_list
+                    .entry(name.to_string())
+                    .or_insert(Thermometer {
+                        status: ThermometerStatus::Disconnected,
+                        last_measurement: None,
+                        target_temperature: None,
+                    });
+
+            match msg_type {
+                "status" => {
+                    let status = match msg.payload.as_str() {
+                        "connected" => ThermometerStatus::Connected,
+                        "disconnected" => ThermometerStatus::Disconnected,
+                        _ => panic!("bad message {:?}", msg),
+                    };
+
+                    thermometer.status = status;
+                }
+                "measurement" => {
+                    let measurement: f64 = msg.payload.parse().expect("bad message");
+
+                    thermometer.last_measurement = Some(measurement);
+                }
+                "target-temperature" => {
+                    let target_temperature: f64 = msg.payload.parse().expect("bad msg");
+
+                    thermometer.target_temperature = Some(target_temperature);
+                }
+                _ => {}
             }
-            "measurement" => {
-                let measurement: f64 = msg.payload.parse().expect("bad message");
-
-                sender.send_modify(|state| {
-                    state
-                        .thermometer_list
-                        .entry(name.to_string())
-                        .or_insert(Thermometer {
-                            status: ThermometerStatus::Disconnected,
-                            last_measurement: Some(measurement),
-                            target_temperature: None,
-                        })
-                        .last_measurement = Some(measurement);
-                });
-            }
-            "target-temperature" => {
-                let target_temperature: f64 = msg.payload.parse().expect("bad msg");
-
-                sender.send_modify(|state| {
-                    state
-                        .thermometer_list
-                        .entry(name.to_string())
-                        .or_insert(Thermometer {
-                            status: ThermometerStatus::Disconnected,
-                            last_measurement: Some(target_temperature),
-                            target_temperature: None,
-                        })
-                        .target_temperature = Some(target_temperature);
-                });
-            }
-            _ => {}
         }
     }
 }
@@ -182,9 +162,11 @@ async fn handle_request_list(mqtt_handle: &mut MqttHandle, request_list: Vec<(St
 }
 
 async fn handle_mqtt_msg_list(msg_list: Vec<MqttMsg>, sender: &mut watch::Sender<ControlState>) {
-    for msg in msg_list {
-        handle_msg(msg, sender)
-    }
+    sender.send_modify(|state| {
+        for msg in msg_list {
+            state.handle_msg(msg)
+        }
+    })
 }
 
 fn read_request_list(
